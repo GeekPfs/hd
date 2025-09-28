@@ -1,446 +1,132 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Drive Manager — Debug Extenso</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:18px;color:#111;background:#fff}
-  header{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  button, .pill{padding:8px 10px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;cursor:pointer}
-  .pill{display:inline-flex;align-items:center;gap:8px}
-  .muted{color:#666;font-size:0.9rem}
-  pre#log{white-space:pre-wrap;background:#0f1720;color:#e6eef8;padding:12px;border-radius:8px;max-height:360px;overflow:auto}
-  .panel{border:1px solid #eee;padding:10px;border-radius:8px;margin-top:12px}
-  table{width:100%;border-collapse:collapse;margin-top:12px}
-  th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
-  label.small{font-size:0.9rem;color:#444}
-  .warn{color:#b33}
-  .ok{color:#198754}
-  .debug-meta{font-size:0.85rem;color:#334}
-  .token-box{font-family:monospace;background:#f3f3f3;padding:6px;border-radius:6px;max-width:100%;overflow:auto}
-  input[type=file]{display:none}
-  .flex{display:flex;gap:8px;align-items:center}
-  .right{margin-left:auto}
-</style>
+  <meta charset="UTF-8">
+  <title>Gerenciador de Drive</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    button { margin: 0.5rem 0; }
+    #file-list { margin-top: 1rem; }
+    li { margin: 0.25rem 0; }
+  </style>
 </head>
 <body>
-  <header>
-    <h3>Drive Manager — Debug Extenso</h3>
-    <div class="flex right">
-      <button id="signin-btn">Conectar</button>
-      <button id="signout-btn" style="display:none">Desconectar</button>
-      <label class="pill"><input id="file-input" type="file"/>Enviar</label>
-      <button id="refresh-btn">Atualizar</button>
-    </div>
-  </header>
+  <h1>Gerenciador de Google Drive</h1>
 
-  <div class="panel debug-meta" id="env">
-    <div><strong>Origin:</strong> <span id="origin"></span></div>
-    <div><strong>CLIENT_ID:</strong> <span id="cid"></span></div>
-    <div><strong>API_KEY:</strong> <span id="aid"></span></div>
-    <div><strong>PARENT_ID:</strong> <span id="pid"></span></div>
-    <div><strong>Network:</strong> <span id="net"></span></div>
-    <div class="muted">⚠️ Sirva por HTTP (ex: http://localhost:8000). Não use file://</div>
-  </div>
+  <button id="authorize_button">Conectar ao Google Drive</button>
+  <button id="signout_button" style="display:none;">Sair</button>
 
-  <div class="panel">
-    <div style="display:flex;gap:8px;align-items:center">
-      <div><strong>Status:</strong> <span id="status">não inicializado</span></div>
-      <div style="margin-left:12px"><strong>Auth token:</strong> <button id="toggle-token">mostrar</button></div>
-      <div class="right">
-        <button id="download-logs">Baixar logs</button>
-        <button id="copy-logs">Copiar</button>
-        <button id="clear-logs">Limpar</button>
-      </div>
-    </div>
-    <div style="margin-top:8px">
-      <div><label class="small">Token (oculto por padrão):</label></div>
-      <div id="token" class="token-box" style="display:none"></div>
-    </div>
-    <div id="auth-info" class="muted" style="margin-top:8px"></div>
-  </div>
+  <h2>Arquivos</h2>
+  <ul id="file-list"></ul>
 
-  <div class="panel">
-    <div style="display:flex;gap:8px;align-items:center">
-      <div><strong>Upload status:</strong> <span id="upload-status">—</span></div>
-      <div class="right"><span id="last-action" class="muted">nenhuma ação recente</span></div>
-    </div>
-  </div>
+  <h2>Criar Pasta</h2>
+  <input type="text" id="folder-name" placeholder="Nome da pasta">
+  <button id="create-folder">Criar Pasta</button>
 
-  <div class="panel">
-    <h4>Logs (mais recentes no topo)</h4>
-    <pre id="log">inicializando log...</pre>
-  </div>
-
-  <div class="panel">
-    <h4>Arquivos na pasta</h4>
-    <table>
-      <thead><tr><th>Nome</th><th>Tipo</th><th>Tamanho</th><th>Modificado</th><th>Ações</th></tr></thead>
-      <tbody id="files-body"><tr><td colspan="5" class="muted">sem dados</td></tr></tbody>
-    </table>
-  </div>
+  <h2>Upload de Arquivo</h2>
+  <input type="file" id="file-input">
+  <button id="upload-file">Enviar Arquivo</button>
 
   <script src="https://apis.google.com/js/api.js"></script>
   <script>
-/* ====================== CONFIG ====================== */
-const CLIENT_ID = '220763720225-nmqu93a2ic9k4o4t76pags6oamil7ja0.apps.googleusercontent.com';
-const API_KEY = 'AIzaSyDxBlnzdk8bcmQJhHaq_Oa1zFeBK7UsvBg';
-const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
-const SCOPES = 'https://www.googleapis.com/auth/drive';
-const PARENT_ID = '12VO5hyACr2bluOtBMg8YVjxXIsKWrLll';
-/* ==================================================== */
+    const CLIENT_ID = '220763720225-nmqu93a2ic9k4o4t76pags6oamil7ja0.apps.googleusercontent.com';
+    const API_KEY = 'AIzaSyDxBlnzdk8bcmQJhHaq_Oa1zFeBK7UsvBg';
+    const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
+    const SCOPES = 'https://www.googleapis.com/auth/drive';
 
-/* ===== UI refs ===== */
-const signinBtn = document.getElementById('signin-btn');
-const signoutBtn = document.getElementById('signout-btn');
-const refreshBtn = document.getElementById('refresh-btn');
-const fileInput = document.getElementById('file-input');
-const logEl = document.getElementById('log');
-const originEl = document.getElementById('origin');
-const cidEl = document.getElementById('cid');
-const aidEl = document.getElementById('aid');
-const pidEl = document.getElementById('pid');
-const netEl = document.getElementById('net');
-const statusEl = document.getElementById('status');
-const tokenEl = document.getElementById('token');
-const toggleTokenBtn = document.getElementById('toggle-token');
-const authInfoEl = document.getElementById('auth-info');
-const uploadStatusEl = document.getElementById('upload-status');
-const lastActionEl = document.getElementById('last-action');
-const filesBody = document.getElementById('files-body');
-const downloadLogsBtn = document.getElementById('download-logs');
-const copyLogsBtn = document.getElementById('copy-logs');
-const clearLogsBtn = document.getElementById('clear-logs');
+    const authorizeButton = document.getElementById('authorize_button');
+    const signoutButton = document.getElementById('signout_button');
 
-/* ===== internal log buffer ===== */
-let logBuffer = [];
-function addLog(level, ...args){
-  const ts = new Date().toISOString();
-  const text = args.map(a => {
-    try { return (typeof a === 'object') ? JSON.stringify(a,null,2) : String(a);
-    } catch(e){ return String(a); }
-  }).join(' ');
-  const entry = `[${ts}] [${level}] ${text}`;
-  logBuffer.unshift(entry);
-  // cap buffer
-  if(logBuffer.length > 2000) logBuffer.length = 2000;
-  // update UI
-  logEl.textContent = logBuffer.slice(0,500).join('\n\n');
-  console.log(entry);
-}
-function clearLogs(){ logBuffer = []; logEl.textContent = ''; }
-function downloadLogs(){
-  const blob = new Blob([logBuffer.join('\n\n')], {type:'text/plain;charset=utf-8'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = `drive-debug-${Date.now()}.log`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-}
-function copyLogs(){
-  navigator.clipboard.writeText(logBuffer.join('\n\n')).then(()=> addLog('INFO','logs copiados para a área de transferência')).catch(e=> addLog('WARN','não foi possível copiar logs', e));
-}
-
-/* ===== environment display ===== */
-function showEnv(){
-  originEl.textContent = location.origin;
-  cidEl.textContent = CLIENT_ID;
-  aidEl.textContent = API_KEY ? 'presente' : 'vazio';
-  pidEl.textContent = PARENT_ID;
-  netEl.textContent = navigator.onLine ? 'online' : 'offline';
-  addLog('ENV', {origin: location.origin, clientId: CLIENT_ID, parentId: PARENT_ID, online: navigator.onLine});
-}
-showEnv();
-window.addEventListener('online', ()=> { netEl.textContent='online'; addLog('NET','online'); });
-window.addEventListener('offline', ()=> { netEl.textContent='offline'; addLog('NET','offline'); });
-
-/* ===== Utility helpers ===== */
-function safeJSON(obj){ try{return JSON.stringify(obj,null,2);}catch(e){return String(obj);} }
-function stack(){ return (new Error()).stack; }
-function setStatus(s){ statusEl.textContent = s; addLog('STATUS', s); }
-function setLastAction(s){ lastActionEl.textContent = s; addLog('ACTION', s); }
-function setUploadStatus(s){ uploadStatusEl.textContent = s; addLog('UPLOAD-STATUS', s); }
-
-/* ====== GAPI init & auth debug ====== */
-function handleClientLoad(){ try{ gapi.load('client:auth2', initClient); addLog('GAPI','gapi.load called'); }catch(e){ addLog('ERROR','gapi.load failed', e, stack()); } }
-
-async function initClient(){
-  setStatus('inicializando gapi.client...');
-  addLog('GAPI','initClient start');
-  try{
-    await gapi.client.init({ apiKey: API_KEY, clientId: CLIENT_ID, discoveryDocs: DISCOVERY_DOCS, scope: SCOPES });
-    addLog('GAPI','gapi.client.init resolved', {discoveryDocs: DISCOVERY_DOCS, scopes:SCOPES});
-    setStatus('gapi inicializado');
-    // debug gapi internals (não exceder tamanho)
-    try{ addLog('GAPI-OBJ', Object.keys(gapi).slice(0,30)); }catch(e){ addLog('GAPI-OBJ-ERR', e); }
-    const auth = gapi.auth2.getAuthInstance();
-    if(!auth){ addLog('ERROR','auth instance não retornada', stack()); setStatus('auth instance ausente'); return; }
-    auth.isSignedIn.listen((val)=> { addLog('AUTH','isSignedIn changed', val); updateSigninStatus(val); });
-    updateSigninStatus(auth.isSignedIn.get());
-  }catch(e){
-    addLog('ERROR','initClient exception', e, safeJSON(e && e.result ? e.result : e));
-    setStatus('erro initClient');
-    authInfoEl.textContent = 'Erro initClient: veja logs detalhados';
-  }
-}
-
-function updateSigninStatus(isSignedIn){
-  try{
-    addLog('AUTH','updateSigninStatus', isSignedIn);
-    signinBtn.style.display = isSignedIn ? 'none' : '';
-    signoutBtn.style.display = isSignedIn ? '' : 'none';
-    if(isSignedIn){
-      setStatus('autenticado');
-      const token = getAccessToken();
-      tokenEl.textContent = token || '[nenhum token]';
-      authInfoEl.textContent = `Usuário autenticado — token presente? ${!!token}`;
-      addLog('AUTH','token prefix', token ? token.substring(0,20)+'…' : null, 'expiry:', getTokenExpiry());
-      // listar após autenticar
-      listFiles().catch(e=> addLog('ERROR','listFiles após signin falhou', e));
-    } else {
-      setStatus('não autenticado');
-      tokenEl.textContent = '';
-      authInfoEl.textContent = 'Usuário não autenticado';
-      addLog('AUTH','usuário não autenticado');
-      filesBody.innerHTML = '<tr><td colspan="5" class="muted">não autenticado</td></tr>';
+    function handleClientLoad() {
+      gapi.load('client:auth2', initClient);
     }
-  }catch(e){ addLog('ERROR','updateSigninStatus failed', e, stack()); }
-}
 
-signinBtn.onclick = async ()=> {
-  setLastAction('clicou conectar');
-  addLog('UI','signin clicked');
-  try{
-    await gapi.auth2.getAuthInstance().signIn();
-    addLog('AUTH','signIn resolved');
-  }catch(e){
-    addLog('ERROR','signIn failed', e, safeJSON(e));
-  }
-};
-signoutBtn.onclick = ()=> {
-  setLastAction('clicou desconectar');
-  addLog('UI','signout clicked');
-  try{
-    gapi.auth2.getAuthInstance().signOut();
-    addLog('AUTH','signOut called');
-    setStatus('desconectado');
-  }catch(e){ addLog('ERROR','signOut failed', e); }
-};
-refreshBtn.onclick = ()=> { setLastAction('clicou atualizar'); addLog('UI','refresh clicked'); listFiles().catch(e=> addLog('ERROR','refresh listFiles', e)); };
-
-/* ===== token helpers ===== */
-function getAccessToken(){
-  try{
-    const inst = gapi.auth2.getAuthInstance();
-    if(!inst) { addLog('TOKEN','auth instance ausente ao obter token'); return null; }
-    const cu = inst.currentUser.get();
-    if(!cu) { addLog('TOKEN','currentUser ausente'); return null; }
-    const ar = cu.getAuthResponse(true);
-    addLog('TOKEN','getAuthResponse', {hasToken: !!(ar && ar.access_token), raw: (ar && Object.keys(ar))});
-    return ar && ar.access_token;
-  }catch(e){ addLog('ERROR','getAccessToken exception', e, stack()); return null; }
-}
-function getTokenExpiry(){
-  try{
-    const inst = gapi.auth2.getAuthInstance();
-    const cu = inst.currentUser.get();
-    const ar = cu.getAuthResponse(true);
-    if(!ar) return null;
-    if(ar.expires_at) return new Date(ar.expires_at).toLocaleString();
-    if(ar.expires_in) return new Date(Date.now()+ar.expires_in*1000).toLocaleString();
-    return null;
-  }catch(e){ return null; }
-}
-toggleTokenBtn.onclick = ()=> {
-  if(tokenEl.style.display === 'none'){ tokenEl.style.display='block'; toggleTokenBtn.textContent='ocultar'; addLog('UI','Token mostrado'); }
-  else { tokenEl.style.display='none'; toggleTokenBtn.textContent='mostrar'; addLog('UI','Token oculto'); }
-};
-
-/* ===== Upload listener ===== */
-let uploading = false;
-
-fileInput.onchange = async (ev) => {
-  setLastAction('selecionou arquivo para upload');
-  addLog('UI','file input changed', {files: ev.target.files && ev.target.files.length});
-  const f = ev.target.files && ev.target.files[0];
-  fileInput.value = ''; // limpa imediatamente para evitar re-triggers
-  if(!f){ addLog('UI','nenhum arquivo selecionado'); return; }
-  try{
-    if(uploading){ addLog('UPLOAD','upload em progresso — rejeitado'); return; }
-    uploading = true;
-    setUploadStatus('iniciando upload: ' + f.name);
-    // primeiro tentar gapi.client.drive.files.create (recomendado)
-    try{
-      addLog('UPLOAD','tentando gapi.client.drive.files.create', {name:f.name,type:f.type,size:f.size});
-      const fileMetadata = { name: f.name, parents: [PARENT_ID] };
-      const media = { mimeType: f.type, body: f };
-      const resp = await gapi.client.drive.files.create({ resource: fileMetadata, media: media, fields: 'id,name,kind' });
-      addLog('UPLOAD','gapi.upload.success', resp.result);
-      setUploadStatus('Enviado via gapi: ' + (resp.result.name || resp.result.id));
-      // refresh
-      await listFiles();
-    }catch(gapiErr){
-      addLog('UPLOAD','gapi upload falhou — fallback XHR', safeJSON(gapiErr));
-      // fallback XHR multipart
-      await uploadViaXHR(f);
+    function initClient() {
+      gapi.client.init({
+        apiKey: API_KEY,
+        clientId: CLIENT_ID,
+        discoveryDocs: DISCOVERY_DOCS,
+        scope: SCOPES
+      }).then(() => {
+        gapi.auth2.getAuthInstance().isSignedIn.listen(updateSigninStatus);
+        updateSigninStatus(gapi.auth2.getAuthInstance().isSignedIn.get());
+        authorizeButton.onclick = () => gapi.auth2.getAuthInstance().signIn();
+        signoutButton.onclick = () => gapi.auth2.getAuthInstance().signOut();
+      });
     }
-  }catch(e){
-    addLog('ERROR','upload geral falhou', e, stack());
-  }finally{
-    uploading = false;
-    setUploadStatus('—');
-    setLastAction('upload finalizado/abortado');
-  }
-};
 
-/* ===== upload via XHR (multipart) com debug extenso ===== */
-function uploadViaXHR(file){
-  return new Promise((resolve,reject)=>{
-    addLog('XHR','uploadViaXHR start', {name:file.name,size:file.size,type:file.type});
-    const token = getAccessToken();
-    if(!token){ addLog('ERROR','Sem token válido para XHR upload'); setUploadStatus('Sem token válido'); reject(new Error('no-token')); return; }
-
-    const metadata = { name: file.name, parents: [PARENT_ID], mimeType: file.type || 'application/octet-stream' };
-    const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json; charset=UTF-8' }));
-    form.append('file', file);
-
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,kind');
-    xhr.setRequestHeader('Authorization', 'Bearer ' + token);
-    xhr.timeout = 120000; // 2 min
-
-    xhr.upload.onprogress = (e) => {
-      const pct = e.lengthComputable ? Math.round((e.loaded/e.total)*100) : 0;
-      setUploadStatus(`Enviando ${file.name}: ${pct}%`);
-      addLog('XHR','upload progress', {loaded:e.loaded,total:e.total,pct});
-    };
-    xhr.onloadstart = (e) => addLog('XHR','onloadstart', e);
-    xhr.onreadystatechange = (e) => addLog('XHR','readystatechange', {readyState:xhr.readyState,status:xhr.status});
-    xhr.onload = (e) => {
-      addLog('XHR','onload', {status:xhr.status, responseText: xhr.responseText && xhr.responseText.substring(0,800)});
-      if(xhr.status>=200 && xhr.status<300){
-        try{
-          const json = xhr.responseText ? JSON.parse(xhr.responseText) : {};
-          addLog('XHR','upload ok json', json);
-          setUploadStatus('Enviado XHR: ' + (json.name || json.id || file.name));
-          listFiles().catch(err=> addLog('ERROR','listFiles pós-XHR', err));
-          resolve(json);
-        }catch(parseErr){
-          addLog('ERROR','não foi possível parsear resposta XHR', parseErr, 'raw:', xhr.responseText);
-          resolve(xhr.responseText);
-        }
+    function updateSigninStatus(isSignedIn) {
+      if (isSignedIn) {
+        authorizeButton.style.display = 'none';
+        signoutButton.style.display = 'block';
+        listFiles();
       } else {
-        addLog('ERROR','XHR upload HTTP error', {status:xhr.status, response:xhr.responseText});
-        if(xhr.status === 401) addLog('ERROR','401 detectado — credenciais inválidas/expiradas/origem não autorizada');
-        if(xhr.status === 403) addLog('ERROR','403 detectado — falta permissão (verifique edição na pasta)');
-        reject({status:xhr.status, response:xhr.responseText});
+        authorizeButton.style.display = 'block';
+        signoutButton.style.display = 'none';
+        document.getElementById('file-list').innerHTML = '';
       }
-    };
-    xhr.onerror = (e) => { addLog('ERROR','xhr.onerror', e); reject(e); };
-    xhr.ontimeout = (e) => { addLog('ERROR','xhr.ontimeout', e); reject(new Error('timeout')); };
-    xhr.onabort = (e) => { addLog('WARN','xhr.onabort', e); reject(new Error('abort')); };
-
-    try{
-      xhr.send(form);
-      addLog('XHR','xhr.send called');
-    }catch(e){
-      addLog('ERROR','xhr.send exception', e, stack());
-      reject(e);
     }
-  });
-}
 
-/* ====== listFiles com debug ====== */
-async function listFiles(){
-  setLastAction('listar arquivos');
-  addLog('FILES','listFiles called for parent', PARENT_ID);
-  try{
-    const token = getAccessToken();
-    if(!token){ addLog('FILES','listFiles halted: sem token'); filesBody.innerHTML = '<tr><td colspan="5" class="muted">sem token</td></tr>'; return; }
-
-    // request via gapi
-    const params = {
-      q: `'${PARENT_ID}' in parents and trashed=false`,
-      pageSize: 100,
-      fields: 'files(id,name,mimeType,size,modifiedTime,owners)'
-    };
-    addLog('FILES','gapi.client.drive.files.list params', params);
-    const res = await gapi.client.drive.files.list(params);
-    addLog('FILES','gapi list response', safeJSON(res && res.result ? res.result : res));
-    const files = (res.result && res.result.files) || [];
-    if(!files.length) {
-      filesBody.innerHTML = '<tr><td colspan="5" class="muted">Sem arquivos</td></tr>';
-      return;
+    function listFiles() {
+      gapi.client.drive.files.list({
+        pageSize: 20,
+        fields: "files(id, name, mimeType)"
+      }).then(response => {
+        const files = response.result.files;
+        const fileList = document.getElementById('file-list');
+        fileList.innerHTML = '';
+        if (files && files.length > 0) {
+          files.forEach(file => {
+            const li = document.createElement('li');
+            li.textContent = `${file.name} (${file.mimeType})`;
+            fileList.appendChild(li);
+          });
+        } else {
+          fileList.innerHTML = '<li>Nenhum arquivo encontrado.</li>';
+        }
+      });
     }
-    filesBody.innerHTML = files.map(f => rowHtml(f)).join('');
-  }catch(e){
-    addLog('ERROR','listFiles failed', e, safeJSON(e && e.result ? e.result : e));
-    if(e && e.status === 401) addLog('ERROR','listFiles 401 — token inválido/expirado/origem não autorizada');
-    if(e && e.status === 403) addLog('ERROR','listFiles 403 — falta permissão na pasta');
-    filesBody.innerHTML = '<tr><td colspan="5" class="muted">Erro ao listar — ver logs</td></tr>';
-  }
-}
-function rowHtml(f){
-  const isFolder = f.mimeType === 'application/vnd.google-apps.folder';
-  const size = f.size ? formatBytes(Number(f.size)) : '';
-  const mtime = f.modifiedTime ? new Date(f.modifiedTime).toLocaleString() : '';
-  return `<tr>
-    <td>${escapeHtml(f.name)}</td>
-    <td>${isFolder ? 'Pasta' : escapeHtml(f.mimeType)}</td>
-    <td>${size}</td>
-    <td>${mtime}</td>
-    <td><button onclick="downloadFile('${f.id}','${escapeJs(f.name)}')">Baixar</button></td>
-  </tr>`;
-}
 
-/* ====== download com debug ====== */
-window.downloadFile = async function(id, name){
-  setLastAction('download ' + name);
-  addLog('DOWNLOAD','downloadFile called', {id,name});
-  try{
-    const token = getAccessToken();
-    if(!token){ addLog('DOWNLOAD','sem token para download'); throw new Error('no-token'); }
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
-      headers: { 'Authorization': 'Bearer ' + token }
+    document.getElementById('create-folder').addEventListener('click', () => {
+      const folderName = document.getElementById('folder-name').value;
+      if (!folderName) return alert('Digite o nome da pasta!');
+      
+      const fileMetadata = {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder'
+      };
+
+      gapi.client.drive.files.create({
+        resource: fileMetadata,
+        fields: 'id'
+      }).then(() => {
+        alert('Pasta criada!');
+        listFiles();
+      });
     });
-    addLog('DOWNLOAD','fetch response', {status: res.status, statusText: res.statusText});
-    // log headers (cuidado com tamanho)
-    const headers = {};
-    res.headers.forEach((v,k)=> headers[k]=v);
-    addLog('DOWNLOAD','response headers', headers);
-    if(!res.ok) {
-      const txt = await res.text().catch(()=> '[no body]');
-      addLog('ERROR','download http error', {status: res.status, body: txt});
-      if(res.status===401) addLog('ERROR','401 no download — credenciais inválidas/expiradas');
-      throw new Error('HTTP ' + res.status);
-    }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-    addLog('DOWNLOAD','download iniciado', {name});
-  }catch(e){
-    addLog('ERROR','download failed', e, stack());
-    alert('Erro no download — veja logs');
-  }
-};
 
-/* ===== small helpers ===== */
-function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function escapeJs(s){ return (s||'').replace(/'/g,"\\'").replace(/"/g,'\"'); }
-function formatBytes(bytes){ if(!bytes) return ''; const k=1024; const sizes=['B','KB','MB','GB','TB']; const i=Math.floor(Math.log(bytes)/Math.log(k)); return parseFloat((bytes/Math.pow(k,i)).toFixed(2)) + ' ' + sizes[i]; }
+    document.getElementById('upload-file').addEventListener('click', () => {
+      const fileInput = document.getElementById('file-input');
+      if (!fileInput.files.length) return alert('Escolha um arquivo!');
 
-/* ===== log control buttons ===== */
-downloadLogsBtn.onclick = downloadLogs;
-copyLogsBtn.onclick = copyLogs;
-clearLogsBtn.onclick = ()=> { clearLogs(); addLog('UI','logs limpos'); };
+      const file = fileInput.files[0];
+      const metadata = {
+        name: file.name
+      };
+      const accessToken = gapi.auth.getToken().access_token;
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+      form.append('file', file);
 
-/* ===== initial call ===== */
-try{ handleClientLoad(); addLog('INIT','handleClientLoad called'); }catch(e){ addLog('ERROR','init call failed', e); }
-setStatus('inicializando...');
+      fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+        method: 'POST',
+        headers: new Headers({ 'Authorization': 'Bearer ' + accessToken }),
+        body: form
+      }).then(response => response.json())
+        .then(() => { alert('Arquivo enviado!'); listFiles(); });
+    });
 
-/* ===== final note ===== */
-addLog('NOTE','Este arquivo gera logs muito verbosos. Não compartilhe tokens. Use toggle de token para ocultar quando necessário.');
-
+    handleClientLoad();
   </script>
 </body>
 </html>
