@@ -41,9 +41,8 @@
     const CLIENT_ID = '220763720225-nmqu93a2ic9k4o4t76pags6oamil7ja0.apps.googleusercontent.com';
     const API_KEY = 'AIzaSyDxBlnzdk8bcmQJhHaq_Oa1zFeBK7UsvBg';
     const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
-    const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+    const SCOPES = 'https://www.googleapis.com/auth/drive'; // acesso total, necessário para pasta compartilhada
 
-    // ID fixo da pasta de destino
     const PARENT_ID = '12VO5hyACr2bluOtBMg8YVjxXIsKWrLll';
 
     const signinBtn = document.getElementById('signin-btn');
@@ -84,18 +83,20 @@
     async function uploadFile(file){
       log('Enviando', file.name);
       const metadata = { name: file.name, parents: [PARENT_ID] };
-      const accessToken = gapi.auth.getToken().access_token;
+      const accessToken = gapi.auth2.getAuthInstance().currentUser.get().getAuthResponse().access_token;
+
       const form = new FormData();
-      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json; charset=UTF-8' }));
       form.append('file', file);
 
       try{
         const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
           method: 'POST',
-          headers: new Headers({ 'Authorization': 'Bearer ' + accessToken }),
+          headers: { 'Authorization': 'Bearer ' + accessToken },
           body: form
         });
         const data = await res.json();
+        if(data.error) throw new Error(data.error.message);
         log('Enviado', data.name);
         listFiles();
       }catch(e){ log('Erro upload', e.message || e); }
@@ -130,8 +131,11 @@
 
     window.downloadFile = async function(id, name){
       try{
-        const res = await gapi.client.drive.files.get({ fileId: id, alt: 'media' });
-        const blob = new Blob([res.body || res.result], { type: 'application/octet-stream' });
+        const accessToken = gapi.auth2.getAuthInstance().currentUser.get().getAuthResponse().access_token;
+        const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
+          headers: { 'Authorization': 'Bearer ' + accessToken }
+        });
+        const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
         URL.revokeObjectURL(url);
