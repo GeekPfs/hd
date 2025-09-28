@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Gerenciador da Pasta Compartilhada</title>
+  <title>Gerenciador Pasta Compartilhada (Drive)</title>
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:18px;color:#111}
     header{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -13,6 +13,8 @@
     .muted{color:#666;font-size:0.9rem}
     input[type=file]{display:none}
     .pill{padding:6px 8px;border-radius:999px;background:#eee;cursor:pointer}
+    .progress{height:8px;background:#eee;border-radius:6px;overflow:hidden;width:160px}
+    .bar{height:100%;width:0%}
   </style>
 </head>
 <body>
@@ -21,7 +23,11 @@
     <button id="signin-btn">Conectar</button>
     <button id="signout-btn" style="display:none">Desconectar</button>
     <button id="refresh-btn">Atualizar</button>
-    <label class="pill"><input id="file-input" type="file" />Enviar arquivo</label>
+    <label class="pill" id="upload-pill" title="Enviar arquivo">
+      <input id="file-input" type="file" />
+      Enviar arquivo
+    </label>
+    <div id="upload-status" class="muted" style="margin-left:8px"></div>
   </header>
 
   <p class="muted">Este gerenciador acessa apenas a pasta compartilhada configurada.</p>
@@ -33,7 +39,7 @@
     <tbody id="files-body"></tbody>
   </table>
 
-  <pre id="log" class="muted" style="margin-top:12px"></pre>
+  <pre id="log" class="muted" style="margin-top:12px;white-space:pre-wrap"></pre>
 
   <script src="https://apis.google.com/js/api.js"></script>
   <script>
@@ -41,111 +47,213 @@
     const CLIENT_ID = '220763720225-nmqu93a2ic9k4o4t76pags6oamil7ja0.apps.googleusercontent.com';
     const API_KEY = 'AIzaSyDxBlnzdk8bcmQJhHaq_Oa1zFeBK7UsvBg';
     const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
-    const SCOPES = 'https://www.googleapis.com/auth/drive'; // acesso total, necessário para pasta compartilhada
+    const SCOPES = 'https://www.googleapis.com/auth/drive'; // necessário para escrever em pastas compartilhadas
 
+    // Pasta de destino (substitua se necessário)
     const PARENT_ID = '12VO5hyACr2bluOtBMg8YVjxXIsKWrLll';
 
+    // Elementos
     const signinBtn = document.getElementById('signin-btn');
     const signoutBtn = document.getElementById('signout-btn');
     const refreshBtn = document.getElementById('refresh-btn');
     const filesBody = document.getElementById('files-body');
     const logEl = document.getElementById('log');
     const fileInput = document.getElementById('file-input');
+    const uploadStatus = document.getElementById('upload-status');
+    const uploadPill = document.getElementById('upload-pill');
 
-    function log(...args){ logEl.textContent = args.join(' ') }
+    function log(...args){ logEl.textContent = (new Date().toLocaleTimeString()) + ' — ' + args.join(' ') + '\n' + logEl.textContent; }
 
     function updateSigninStatus(isSignedIn){
       signinBtn.style.display = isSignedIn ? 'none' : '';
       signoutBtn.style.display = isSignedIn ? '' : 'none';
-      if(isSignedIn) listFiles(); else filesBody.innerHTML='';
+      uploadPill.style.display = isSignedIn ? '' : 'none';
+      if(isSignedIn) listFiles(); else { filesBody.innerHTML=''; log('Usuário desconectado'); }
     }
 
     function handleClientLoad(){ gapi.load('client:auth2', initClient); }
 
     async function initClient(){
-      await gapi.client.init({ apiKey: API_KEY, clientId: CLIENT_ID, discoveryDocs: DISCOVERY_DOCS, scope: SCOPES });
-      const auth = gapi.auth2.getAuthInstance();
-      auth.isSignedIn.listen(() => updateSigninStatus(auth.isSignedIn.get()));
-      updateSigninStatus(auth.isSignedIn.get());
+      try{
+        await gapi.client.init({ apiKey: API_KEY, clientId: CLIENT_ID, discoveryDocs: DISCOVERY_DOCS, scope: SCOPES });
+        const auth = gapi.auth2.getAuthInstance();
+        auth.isSignedIn.listen(() => updateSigninStatus(auth.isSignedIn.get()));
+        updateSigninStatus(auth.isSignedIn.get());
+        log('gapi inicializado');
+      }catch(e){
+        log('Erro initClient:', e.message || e);
+      }
     }
 
     signinBtn.onclick = ()=> gapi.auth2.getAuthInstance().signIn();
     signoutBtn.onclick = ()=> gapi.auth2.getAuthInstance().signOut();
     refreshBtn.onclick = ()=> listFiles();
 
-    fileInput.addEventListener('change', async (ev)=>{
-      const f = ev.target.files[0];
-      if(!f) return;
-      await uploadFile(f);
-      fileInput.value='';
-    });
+    // Evita múltiplos uploads simultâneos
+    let uploading = false;
 
-    async function uploadFile(file){
-      log('Enviando', file.name);
-      const metadata = { name: file.name, parents: [PARENT_ID] };
+    fileInput.onchange = async (ev) => {
+      const f = ev.target.files && ev.target.files[0];
+      if(!f) return;
+      // limpa input para permitir reenvio do mesmo arquivo posteriormente
+      fileInput.value = '';
+      if(uploading){ log('Já existe upload em andamento'); return; }
+      await uploadFileXHR(f);
+    };
+
+    // Upload usando XMLHttpRequest para multipart (progresso + tratamento de resposta)
+    async function uploadFileXHR(file){
+      uploading = true;
+      uploadStatus.textContent = `Enviando: ${file.name}`;
+      uploadStatus.appendChild(createProgressBar()); // barra dentro do elemento
+      disableInputs(true);
+
+      const metadata = { name: file.name, parents: [PARENT_ID], mimeType: file.type || 'application/octet-stream' };
       const accessToken = gapi.auth2.getAuthInstance().currentUser.get().getAuthResponse().access_token;
 
       const form = new FormData();
       form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json; charset=UTF-8' }));
       form.append('file', file);
 
-      try{
-        const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + accessToken },
-          body: form
-        });
-        const data = await res.json();
-        if(data.error) throw new Error(data.error.message);
-        log('Enviado', data.name);
-        listFiles();
-      }catch(e){ log('Erro upload', e.message || e); }
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name');
+      xhr.setRequestHeader('Authorization', 'Bearer ' + accessToken);
+
+      xhr.upload.onprogress = (e) => {
+        const pct = e.lengthComputable ? Math.round((e.loaded / e.total) * 100) : 0;
+        setProgress(pct);
+      };
+
+      xhr.onload = function(){
+        try{
+          if(xhr.status >= 200 && xhr.status < 300){
+            const resp = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+            log('Upload concluído:', resp.name || resp.id || 'sem nome retornado');
+            uploadStatus.textContent = `Enviado: ${resp.name || file.name}`;
+            listFiles();
+          } else {
+            let errText = xhr.responseText || `HTTP ${xhr.status}`;
+            try { const json = JSON.parse(xhr.responseText); if(json.error && json.error.message) errText = json.error.message; } catch(e){}
+            log('Erro upload:', errText);
+            uploadStatus.textContent = 'Erro no upload';
+          }
+        }catch(e){
+          log('Erro no onload:', e.message || e);
+          uploadStatus.textContent = 'Erro no upload';
+        } finally {
+          uploading = false;
+          disableInputs(false);
+          setTimeout(() => uploadStatus.textContent = '', 2500);
+        }
+      };
+
+      xhr.onerror = function(){
+        log('Erro de rede no upload');
+        uploading = false;
+        disableInputs(false);
+        uploadStatus.textContent = 'Erro de rede';
+      };
+
+      xhr.send(form);
     }
 
+    function createProgressBar(){
+      const wrapper = document.createElement('div');
+      wrapper.className = 'progress';
+      wrapper.style.display = 'inline-block';
+      wrapper.style.marginLeft = '8px';
+      wrapper.style.verticalAlign = 'middle';
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.background = '#4caf50';
+      wrapper.appendChild(bar);
+      wrapper._bar = bar;
+      // guardar referência para update
+      uploadStatus._progress = wrapper;
+      return wrapper;
+    }
+    function setProgress(pct){
+      if(uploadStatus._progress && uploadStatus._progress._bar) uploadStatus._progress._bar.style.width = pct + '%';
+    }
+
+    function disableInputs(state){
+      if(state){
+        uploadPill.style.pointerEvents = 'none';
+        uploadPill.style.opacity = '0.6';
+        signinBtn.disabled = true;
+        refreshBtn.disabled = true;
+      } else {
+        uploadPill.style.pointerEvents = '';
+        uploadPill.style.opacity = '';
+        signinBtn.disabled = false;
+        refreshBtn.disabled = false;
+      }
+    }
+
+    // Listar arquivos da pasta
     async function listFiles(){
       filesBody.innerHTML = '<tr><td colspan="5" class="muted">Carregando...</td></tr>';
       try{
         const res = await gapi.client.drive.files.list({
           q: `'${PARENT_ID}' in parents and trashed=false`,
           pageSize: 100,
-          fields: 'files(id,name,mimeType,size,modifiedTime)'
+          fields: 'files(id,name,mimeType,size,modifiedTime,owners)'
         });
         const files = res.result.files || [];
-        if(!files.length) filesBody.innerHTML = '<tr><td colspan="5" class="muted">Sem arquivos</td></tr>';
-        else filesBody.innerHTML = files.map(f => rowHtml(f)).join('');
-      }catch(e){ filesBody.innerHTML=''; log('Erro listar', e.message || e); }
+        if(!files.length) {
+          filesBody.innerHTML = '<tr><td colspan="5" class="muted">Sem arquivos</td></tr>';
+          return;
+        }
+        filesBody.innerHTML = files.map(f => rowHtml(f)).join('');
+      }catch(e){
+        filesBody.innerHTML = '';
+        log('Erro listar arquivos:', (e.result && e.result.error && e.result.error.message) || e.message || e);
+        // Dica: 403 pode indicar falta de permissão na pasta
+        if(e.status === 403 || (e.result && e.result.error && e.result.error.code === 403)){
+          log('Permissão negada. Verifique se a pasta permite edição para o usuário autenticado.');
+        }
+      }
     }
 
     function rowHtml(f){
       const isFolder = f.mimeType === 'application/vnd.google-apps.folder';
       const size = f.size ? formatBytes(Number(f.size)) : '';
       const mtime = f.modifiedTime ? new Date(f.modifiedTime).toLocaleString() : '';
+      const safeName = escapeHtml(f.name);
       return `<tr>
-        <td>${escapeHtml(f.name)}</td>
-        <td>${isFolder ? 'Pasta' : f.mimeType}</td>
+        <td>${safeName}</td>
+        <td>${isFolder ? 'Pasta' : escapeHtml(f.mimeType)}</td>
         <td>${size}</td>
         <td>${mtime}</td>
-        <td><button onclick="downloadFile('${f.id}','${escapeJs(f.name)}')">Baixar</button></td>
+        <td>
+          <button onclick="downloadFile('${f.id}','${escapeJs(f.name)}')">Baixar</button>
+        </td>
       </tr>`;
     }
 
+    // Download simples via fetch + blob
     window.downloadFile = async function(id, name){
       try{
         const accessToken = gapi.auth2.getAuthInstance().currentUser.get().getAuthResponse().access_token;
         const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
           headers: { 'Authorization': 'Bearer ' + accessToken }
         });
+        if(!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
         URL.revokeObjectURL(url);
-      }catch(e){ log('Erro download', e.message || e); }
+        log('Download iniciado:', name);
+      }catch(e){
+        log('Erro download:', e.message || e);
+      }
     };
 
     function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     function escapeJs(s){ return (s||'').replace(/'/g,"\\'").replace(/"/g,'\"'); }
     function formatBytes(bytes){ if(bytes===0) return '0 B'; const k=1024; const sizes=['B','KB','MB','GB','TB']; const i=Math.floor(Math.log(bytes)/Math.log(k)); return parseFloat((bytes/Math.pow(k,i)).toFixed(2)) + ' ' + sizes[i]; }
 
+    // Inicializa
     handleClientLoad();
   </script>
 </body>
