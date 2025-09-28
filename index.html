@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gerenciador da Pasta Compartilhada</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:18px;color:#111}
+    header{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    button{padding:8px 10px;border-radius:6px;border:1px solid #ccc;background:#f5f5f5;cursor:pointer}
+    #files{margin-top:18px;border-collapse:collapse;width:100%}
+    #files th,#files td{border-bottom:1px solid #eee;padding:8px;text-align:left}
+    .muted{color:#666;font-size:0.9rem}
+    input[type=file]{display:none}
+    .pill{padding:6px 8px;border-radius:999px;background:#eee;cursor:pointer}
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Pasta Compartilhada</h2>
+    <button id="signin-btn">Conectar</button>
+    <button id="signout-btn" style="display:none">Desconectar</button>
+    <button id="refresh-btn">Atualizar</button>
+    <label class="pill"><input id="file-input" type="file" />Enviar arquivo</label>
+  </header>
+
+  <p class="muted">Este gerenciador acessa apenas a pasta compartilhada configurada.</p>
+
+  <table id="files">
+    <thead>
+      <tr><th>Nome</th><th>Tipo</th><th>Tamanho</th><th>Modificado</th><th>Ações</th></tr>
+    </thead>
+    <tbody id="files-body"></tbody>
+  </table>
+
+  <pre id="log" class="muted" style="margin-top:12px"></pre>
+
+  <script src="https://apis.google.com/js/api.js"></script>
+  <script>
+    // === CONFIGURAÇÃO ===
+    const CLIENT_ID = '220763720225-nmqu93a2ic9k4o4t76pags6oamil7ja0.apps.googleusercontent.com';
+    const API_KEY = 'AIzaSyDxBlnzdk8bcmQJhHaq_Oa1zFeBK7UsvBg';
+    const DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"];
+    const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+
+    // ID fixo da pasta de destino
+    const PARENT_ID = '12VO5hyACr2bluOtBMg8YVjxXIsKWrLll';
+
+    const signinBtn = document.getElementById('signin-btn');
+    const signoutBtn = document.getElementById('signout-btn');
+    const refreshBtn = document.getElementById('refresh-btn');
+    const filesBody = document.getElementById('files-body');
+    const logEl = document.getElementById('log');
+    const fileInput = document.getElementById('file-input');
+
+    function log(...args){ logEl.textContent = args.join(' ') }
+
+    function updateSigninStatus(isSignedIn){
+      signinBtn.style.display = isSignedIn ? 'none' : '';
+      signoutBtn.style.display = isSignedIn ? '' : 'none';
+      if(isSignedIn) listFiles(); else filesBody.innerHTML='';
+    }
+
+    function handleClientLoad(){ gapi.load('client:auth2', initClient); }
+
+    async function initClient(){
+      await gapi.client.init({ apiKey: API_KEY, clientId: CLIENT_ID, discoveryDocs: DISCOVERY_DOCS, scope: SCOPES });
+      const auth = gapi.auth2.getAuthInstance();
+      auth.isSignedIn.listen(() => updateSigninStatus(auth.isSignedIn.get()));
+      updateSigninStatus(auth.isSignedIn.get());
+    }
+
+    signinBtn.onclick = ()=> gapi.auth2.getAuthInstance().signIn();
+    signoutBtn.onclick = ()=> gapi.auth2.getAuthInstance().signOut();
+    refreshBtn.onclick = ()=> listFiles();
+
+    fileInput.addEventListener('change', async (ev)=>{
+      const f = ev.target.files[0];
+      if(!f) return;
+      await uploadFile(f);
+      fileInput.value='';
+    });
+
+    async function uploadFile(file){
+      log('Enviando', file.name);
+      const metadata = { name: file.name, parents: [PARENT_ID] };
+      const accessToken = gapi.auth.getToken().access_token;
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+      form.append('file', file);
+
+      try{
+        const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
+          method: 'POST',
+          headers: new Headers({ 'Authorization': 'Bearer ' + accessToken }),
+          body: form
+        });
+        const data = await res.json();
+        log('Enviado', data.name);
+        listFiles();
+      }catch(e){ log('Erro upload', e.message || e); }
+    }
+
+    async function listFiles(){
+      filesBody.innerHTML = '<tr><td colspan="5" class="muted">Carregando...</td></tr>';
+      try{
+        const res = await gapi.client.drive.files.list({
+          q: `'${PARENT_ID}' in parents and trashed=false`,
+          pageSize: 100,
+          fields: 'files(id,name,mimeType,size,modifiedTime)'
+        });
+        const files = res.result.files || [];
+        if(!files.length) filesBody.innerHTML = '<tr><td colspan="5" class="muted">Sem arquivos</td></tr>';
+        else filesBody.innerHTML = files.map(f => rowHtml(f)).join('');
+      }catch(e){ filesBody.innerHTML=''; log('Erro listar', e.message || e); }
+    }
+
+    function rowHtml(f){
+      const isFolder = f.mimeType === 'application/vnd.google-apps.folder';
+      const size = f.size ? formatBytes(Number(f.size)) : '';
+      const mtime = f.modifiedTime ? new Date(f.modifiedTime).toLocaleString() : '';
+      return `<tr>
+        <td>${escapeHtml(f.name)}</td>
+        <td>${isFolder ? 'Pasta' : f.mimeType}</td>
+        <td>${size}</td>
+        <td>${mtime}</td>
+        <td><button onclick="downloadFile('${f.id}','${escapeJs(f.name)}')">Baixar</button></td>
+      </tr>`;
+    }
+
+    window.downloadFile = async function(id, name){
+      try{
+        const res = await gapi.client.drive.files.get({ fileId: id, alt: 'media' });
+        const blob = new Blob([res.body || res.result], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      }catch(e){ log('Erro download', e.message || e); }
+    };
+
+    function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function escapeJs(s){ return (s||'').replace(/'/g,"\\'").replace(/"/g,'\"'); }
+    function formatBytes(bytes){ if(bytes===0) return '0 B'; const k=1024; const sizes=['B','KB','MB','GB','TB']; const i=Math.floor(Math.log(bytes)/Math.log(k)); return parseFloat((bytes/Math.pow(k,i)).toFixed(2)) + ' ' + sizes[i]; }
+
+    handleClientLoad();
+  </script>
+</body>
+</html>
